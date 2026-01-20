@@ -1,0 +1,37 @@
+name: revwa_ksa_trucks
+description: تطبيق شاحنات سعودي
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+
+dependencies:
+
+  flutter:
+    sdk: flutter
+  geolocator: ^14.0.2
+  geocoding: ^4.0.0
+  google_place: ^0.4.7
+  ##flutter_google_places_sdk: ^1.0.0
+  google_maps_flutter: ^2.10.0
+  google_api_headers: ^4.6.2
+  cupertino_icons: ^1.0.8
+  supabase_flutter: ^2.8.0   # تمام، أحدث إصدار
+  http: ^0.13.6
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # لاحظ وجود مسافتين (Space) قبل اسم المكتبة بالأسفل
+  flutter_launcher_icons: ^0.13.1
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+
+# هذا القسم يجب أن يكون في بداية السطر تماماً (بدون أي مسافات قبله)
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/revwa_icon.png"
+  min_sdk_android: 21

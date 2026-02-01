@@ -1,17 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
-// ... imports remain the same
 class HomeDashboard extends StatefulWidget {
   final String driverPhone;
-
   const HomeDashboard({super.key, required this.driverPhone});
 
   @override
@@ -20,15 +17,13 @@ class HomeDashboard extends StatefulWidget {
 
 class _HomeDashboardState extends State<HomeDashboard> {
   final supabase = Supabase.instance.client;
-
   Map<String, dynamic>? driver;
-  String currentCity = 'غير محدد';
+  String currentCity = 'جاري التحديد...';
   String truckType = 'غير محدد';
   List<Map<String, dynamic>> availableOrders = [];
   bool isLoading = true;
   bool isAvailable = false;
   bool isSwitchLoading = false;
-
   Timer? _locationTimer;
   StreamSubscription? _notificationsSub;
 
@@ -54,18 +49,18 @@ class _HomeDashboardState extends State<HomeDashboard> {
           .eq('phone', widget.driverPhone)
           .single();
 
-      isAvailable = driver!['is_available'] == 'online' || driver!['is_available'] == null;
+      isAvailable = driver!['is_available'] == 'online';
       currentCity = driver!['current_city'] ?? 'غير محدد';
 
-      final assignmentResponse = await supabase
+      final assignment = await supabase
           .from('driver_truck_assignments')
           .select('trucks(truck_type)')
           .eq('driver_id', driver!['id'])
           .eq('is_primary', true)
           .maybeSingle();
 
-      if (assignmentResponse != null && assignmentResponse['trucks'] != null) {
-        truckType = assignmentResponse['trucks']['truck_type'] ?? 'غير محدد';
+      if (assignment != null && assignment['trucks'] != null) {
+        truckType = assignment['trucks']['truck_type'] ?? 'غير محدد';
       }
 
       await _loadAvailableOrders();
@@ -74,61 +69,52 @@ class _HomeDashboardState extends State<HomeDashboard> {
           .from('notified_drivers')
           .stream(primaryKey: ['id'])
           .eq('driver_id', driver!['id'])
-          .listen((_) async {
+          .listen((_) {
         if (mounted) _loadAvailableOrders(refreshOnly: true);
       });
 
       _startLocationUpdates();
     } catch (e) {
-      print('Error loading driver data: $e');
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ في جلب البيانات: $e')));
+      _showSnackBar('خطأ في جلب البيانات', Colors.red);
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
   }
 
   void _startLocationUpdates() {
-    _locationTimer = Timer.periodic(const Duration(minutes: 15), (_) async {
-      if (isAvailable && driver != null) await _updateDriverLocation();
+    _locationTimer?.cancel();
+    _locationTimer = Timer.periodic(const Duration(minutes: 10), (_) {
+      if (isAvailable && driver != null) _updateDriverLocation();
     });
     if (isAvailable) _updateDriverLocation();
   }
 
   Future<void> _updateDriverLocation() async {
     try {
-      if (!await Geolocator.isLocationServiceEnabled()) return;
       LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) return;
-
-      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
-      String? newCity;
-
-      try {
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.whileInUse || permission == LocationPermission.always) {
+        Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.low);
         List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
-        if (placemarks.isNotEmpty) {
-          Placemark p = placemarks[0];
-          newCity = p.locality ?? p.subLocality ?? p.subAdministrativeArea ?? p.administrativeArea;
-        }
-      } catch (_) {}
+        String? city = placemarks.isNotEmpty ? placemarks[0].locality : null;
 
-      Map<String, dynamic> updateData = {'latitude': position.latitude, 'longitude': position.longitude};
-      if (newCity != null && newCity.isNotEmpty) updateData['current_city'] = newCity;
+        await supabase.from('drivers').update({
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          if (city != null) 'current_city': city,
+        }).eq('id', driver!['id']);
 
-      await supabase.from('drivers').update(updateData).eq('id', driver!['id']);
-
-      if (mounted) {
-        if (newCity != null && newCity.isNotEmpty) currentCity = newCity;
-        _loadAvailableOrders(refreshOnly: true); // أسرع: فقط تحديث القيم بدل إعادة تحميل كل شيء
+        if (mounted && city != null) setState(() => currentCity = city);
       }
     } catch (e) {
-      print('Error updating location: $e');
+      debugPrint('Location error: $e');
     }
   }
 
   Future<void> _loadAvailableOrders({bool refreshOnly = false}) async {
     if (driver == null) return;
-
     if (!refreshOnly) setState(() => isLoading = true);
 
     try {
@@ -139,121 +125,142 @@ class _HomeDashboardState extends State<HomeDashboard> {
       });
 
       if (mounted) {
-        // تحديث أسرع: فقط تحديث العناصر الجديدة/الحالية
-        availableOrders = List<Map<String, dynamic>>.from(response).map((order) {
-          if (order['distance_km'] != null) {
-            double km = order['distance_km'] as double;
-            order['distance_km_display'] = km < 1 ? '< 1 كم' : '${km.toStringAsFixed(1)} كم';
-          }
-          return order;
-        }).toList();
+        setState(() {
+          availableOrders = List<Map<String, dynamic>>.from(response).map((o) {
+            double km = (o['distance_km'] as num?)?.toDouble() ?? 0.0;
+            o['display_dist'] = km < 1 ? 'قريب جداً' : '${km.toStringAsFixed(1)} كم';
+            return o;
+          }).toList();
+        });
       }
-    } catch (e) {
-      print('Error loading available orders: $e');
-      if (mounted && !refreshOnly) availableOrders = [];
     } finally {
-      if (!refreshOnly && mounted) setState(() => isLoading = false);
+      if (mounted && !refreshOnly) setState(() => isLoading = false);
     }
   }
 
   Future<void> _submitOffer(Map<String, dynamic> order) async {
-    final orderId = order['order_id'] as String;
-    final controller = TextEditingController();
-
-    final double? selectedPrice = await showDialog<double?>(
+    final priceController = TextEditingController();
+    final double? price = await showDialog<double?>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('قدم عرضك', textAlign: TextAlign.center),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('من: ${order['from_location']} → ${order['to_location']}'),
-              Text('نوع الشاحنة: ${order['truck_type']}'),
-              if (order['min_manufacturing_year'] != null)
-                Text('أدنى موديل: ${order['min_manufacturing_year']}'),
-              if (order['load_details'] != null) Text('تفاصيل: ${order['load_details']}'),
-              if (order['distance_km_display'] != null)
-                Text('المسافة الحالية: ${order['distance_km_display']}', style: const TextStyle(color: Colors.yellowAccent)),
-              const SizedBox(height: 20),
-              TextField(
-                controller: controller,
-                keyboardType: TextInputType.number,
-                textAlign: TextAlign.center,
-                decoration: InputDecoration(
-                  labelText: 'السعر بالريال',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  filled: true,
-                  fillColor: Colors.grey[100],
+        backgroundColor: Colors.white,
+        title: const Text(
+          'تقديم عرض سعر',
+          style: TextStyle(color: Color(0xFF1E4D2B), fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'من: ${order['from_location']}\nإلى: ${order['to_location']}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.black87, fontSize: 13),
+            ),
+            const SizedBox(height: 15),
+            TextField(
+              controller: priceController,
+              keyboardType: TextInputType.number,
+              textAlign: TextAlign.center,
+              autofocus: true,
+              style: const TextStyle(color: Colors.black, fontSize: 26, fontWeight: FontWeight.bold),
+              decoration: InputDecoration(
+                hintText: '0.00',
+                filled: true,
+                fillColor: Colors.grey.shade100,
+                suffixText: 'ريال',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: const BorderSide(color: Color(0xFF2ECC71), width: 2),
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('إلغاء', style: TextStyle(color: Colors.red))),
           ElevatedButton(
-            onPressed: () {
-              final price = double.tryParse(controller.text);
-              if (price != null && price > 0) Navigator.pop(context, price);
-            },
-            child: const Text('تقديم العرض'),
+            onPressed: () => Navigator.pop(ctx, double.tryParse(priceController.text)),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2ECC71)),
+            child: const Text('إرسال العرض', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
     );
 
-    if (selectedPrice == null || selectedPrice <= 0) return;
-
-    // تحديث محلي أسرع
-    setState(() {
-      order['has_driver_offer'] = true;
-      order['offered_price'] = selectedPrice;
-      order['offer_status'] = 'pending';
-    });
-
-    try {
-      await supabase.from('order_offers').insert({
-        'order_id': orderId,
-        'driver_id': driver!['id'],
-        'offered_price': selectedPrice,
-        'status': 'pending',
-      });
-
-      await http.post(
-        Uri.parse('https://revwa.cloud/webhook/new-offer-notification'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'order_id': orderId, 'driver_id': driver!['id'], 'offered_price': selectedPrice}),
-      );
-
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تم تقديم عرضك بـ $selectedPrice ريال بنجاح!')),
-      );
-    } catch (e) {
-      print('Error submitting offer: $e');
+    if (price != null && price > 0) {
+      try {
+        await supabase.from('order_offers').insert({
+          'order_id': order['order_id'],
+          'driver_id': driver!['id'],
+          'offered_price': price,
+          'status': 'pending',
+        });
+        _showSnackBar('تم إرسال عرضك بنجاح بـ $price ريال', Colors.green);
+        _loadAvailableOrders(refreshOnly: true);
+      } catch (e) {
+        _showSnackBar('خطأ في إرسال العرض', Colors.red);
+      }
     }
   }
 
-  Future<void> _openMap(Map<String, dynamic> order) async {
-    if (driver?['latitude'] == null || order['from_latitude'] == null) return;
+  void _showSnackBar(String m, Color c) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(m, textAlign: TextAlign.right), backgroundColor: c),
+    );
+  }
 
-    final url = 'https://www.google.com/maps/dir/?api=1'
-        '&origin=${driver!['latitude']},${driver!['longitude']}'
-        '&destination=${order['from_latitude']},${order['from_longitude']}'
-        '&travelmode=driving';
+  Future<void> _openMapForOrder(Map<String, dynamic> order) async {
+    final String fromLocation = order['from_location'] ?? 'مكة';
+    final Uri googleMapsUrl;
 
-    if (await canLaunchUrl(Uri.parse(url))) await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    if (order['from_lat'] != null && order['from_lng'] != null) {
+      final double lat = (order['from_lat'] as num).toDouble();
+      final double lng = (order['from_lng'] as num).toDouble();
+      googleMapsUrl = Uri.parse('geo:$lat,$lng?q=$lat,$lng');
+    } else {
+      googleMapsUrl = Uri.parse('https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(fromLocation)}');
+    }
+
+    if (await canLaunchUrl(googleMapsUrl)) {
+      await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
+    } else {
+      if (mounted) _showSnackBar('لا يمكن فتح الخريطة', Colors.red);
+    }
+  }
+
+  /// دالة تسجيل الخروج
+  Future<void> _signOut() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear(); // أو prefs.remove('isLoggedIn'); prefs.remove('userType'); prefs.remove('userPhone');
+
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, '/userType');
+      _showSnackBar('تم تسجيل الخروج بنجاح', Colors.orange);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
-    final double padding = size.width * 0.05;
+    final bool isTablet = size.width > 600;
+    final double horizontalPadding = isTablet ? size.width * 0.15 : 16.0;
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('داشبورد السائق'),
+        backgroundColor: const Color(0xFF1E4D2B),
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'تسجيل الخروج',
+            onPressed: _signOut,
+          ),
+        ],
+      ),
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -265,110 +272,21 @@ class _HomeDashboardState extends State<HomeDashboard> {
         child: SafeArea(
           child: Column(
             children: [
-              Padding(
-                padding: EdgeInsets.all(padding),
-                child: isPortrait
-                    ? Column(children: _headerChildren())
-                    : Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: _headerChildren()),
-              ),
+              _buildHeader(isTablet, horizontalPadding),
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
+                padding: EdgeInsets.symmetric(vertical: 10),
                 child: Text(
                   'الطلبات المتاحة لك',
-                  style: TextStyle(fontSize: 24, color: Colors.white, fontWeight: FontWeight.bold),
+                  style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
                 ),
               ),
               Expanded(
-                child: isLoading
-                    ? const Center(child: CircularProgressIndicator(color: Color(0xFF2ECC71)))
-                    : availableOrders.isEmpty
-                    ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.inbox, size: 80, color: Colors.white.withOpacity(0.5)),
-                      const SizedBox(height: 16),
-                      const Text('لا توجد طلبات حاليًا', style: TextStyle(fontSize: 18, color: Colors.white70)),
-                      const SizedBox(height: 8),
-                      const Text('اسحب لأسفل للتحديث', style: TextStyle(color: Colors.white54)),
-                    ],
-                  ),
-                )
-                    : RefreshIndicator(
-                  onRefresh: _loadAvailableOrders,
+                child: RefreshIndicator(
+                  onRefresh: () => _loadAvailableOrders(refreshOnly: true),
                   color: const Color(0xFF2ECC71),
-                  child: ListView.builder(
-                    padding: EdgeInsets.all(padding),
-                    itemCount: availableOrders.length,
-                    itemBuilder: (context, index) {
-                      final order = availableOrders[index];
-                      final offerStatus = order['offer_status'] as String?;
-                      final hasOffered = order['has_driver_offer'] == true;
-                      final isOfferAccepted = offerStatus == 'accepted' || offerStatus == 'assigned';
-
-                      return AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        margin: const EdgeInsets.symmetric(vertical: 8),
-                        child: Card(
-                          elevation: 8,
-                          shadowColor: Colors.black.withOpacity(0.3),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                          color: isOfferAccepted ? const Color(0xFF2ECC71).withOpacity(0.3) : Colors.white.withOpacity(0.1),
-                          child: ListTile(
-                            contentPadding: const EdgeInsets.all(20),
-                            onTap: () => _openMap(order),
-                            title: Text('${order['from_location']} → ${order['to_location']}',
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18)),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                if (isOfferAccepted)
-                                  const Padding(
-                                    padding: EdgeInsets.only(bottom: 12),
-                                    child: Text('🎉 تم قبول عرضك من العميل!', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 17)),
-                                  ),
-                                Text('نوع الشاحنة: ${order['truck_type']}', style: TextStyle(color: Colors.white70)),
-                                if (order['min_manufacturing_year'] != null)
-                                  Text('أدنى موديل: ${order['min_manufacturing_year']}', style: const TextStyle(color: Colors.orangeAccent)),
-                                if (order['load_details'] != null && order['load_details'].toString().isNotEmpty)
-                                  Text('التفاصيل: ${order['load_details']}', style: const TextStyle(color: Colors.white60)),
-                                Text('العدد المطلوب: ${order['required_trucks_count'] ?? 1}', style: const TextStyle(color: Colors.white60)),
-                                if (order['distance_km_display'] != null)
-                                  Text('المسافة الحالية: ${order['distance_km_display']}', style: const TextStyle(color: Colors.yellowAccent, fontSize: 16)),
-                                if (isOfferAccepted) ...[
-                                  const SizedBox(height: 12),
-                                  const Text('معلومات العميل:', style: TextStyle(color: Colors.cyan, fontWeight: FontWeight.bold)),
-                                  Text('الاسم: ${order['client_name'] ?? 'غير متوفر'}', style: const TextStyle(color: Colors.cyan)),
-                                  Text('رقم الجوال: ${order['client_phone'] ?? 'غير متوفر'}', style: const TextStyle(color: Colors.cyan)),
-                                ],
-                                if (!isOfferAccepted)
-                                  const Text('اضغط على الكارد لفتح المسار على الخريطة', style: TextStyle(color: Colors.cyanAccent, fontStyle: FontStyle.italic)),
-                              ],
-                            ),
-                            trailing: isOfferAccepted
-                                ? const Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.check_circle, color: Colors.greenAccent, size: 50),
-                                Text('مقبول', style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
-                              ],
-                            )
-                                : ElevatedButton.icon(
-                              onPressed: hasOffered ? null : () => _submitOffer(order),
-                              icon: hasOffered ? const Icon(Icons.check) : const Icon(Icons.send),
-                              label: Text(hasOffered ? 'تم التقديم' : 'قدم عرض'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: hasOffered ? Colors.grey : const Color(0xFF2ECC71),
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+                  child: isLoading
+                      ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                      : _buildOrdersList(isTablet, horizontalPadding),
                 ),
               ),
             ],
@@ -378,41 +296,142 @@ class _HomeDashboardState extends State<HomeDashboard> {
     );
   }
 
-  List<Widget> _headerChildren() {
-    return [
-      Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildHeader(bool isTablet, double padding) {
+    return Padding(
+      padding: EdgeInsets.all(padding),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text('مرحبا، ${driver?['name'] ?? 'سائق'}!',
-              style: const TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Row(children: [const Icon(Icons.location_on, color: Colors.white70, size: 20), const SizedBox(width: 4), Text(currentCity, style: const TextStyle(color: Colors.white70, fontSize: 16))]),
-          Row(children: [const Icon(Icons.local_shipping, color: Colors.white70, size: 20), const SizedBox(width: 4), Text(truckType, style: const TextStyle(color: Colors.white70, fontSize: 16))]),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'مرحباً، ${driver?['name'] ?? 'سائقنا'}',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: isTablet ? 26 : 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Row(
+                  children: [
+                    const Icon(Icons.location_on, color: Colors.greenAccent, size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      currentCity,
+                      style: TextStyle(color: Colors.white70, fontSize: isTablet ? 16 : 14),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          _buildStatusSwitch(),
         ],
       ),
-      Column(
+    );
+  }
+
+  Widget _buildStatusSwitch() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+      decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(20)),
+      child: Row(
         children: [
-          const Text('متاح للعمل', style: TextStyle(color: Colors.white70)),
+          Text(isAvailable ? 'متصل' : 'متوقف', style: const TextStyle(color: Colors.white, fontSize: 12)),
           isSwitchLoading
-              ? const CircularProgressIndicator(color: Color(0xFF2ECC71))
+              ? const Padding(
+            padding: EdgeInsets.all(8.0),
+            child: SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+          )
               : Switch(
             value: isAvailable,
             activeColor: const Color(0xFF2ECC71),
-            onChanged: (value) async {
+            onChanged: (v) async {
               setState(() => isSwitchLoading = true);
-              try {
-                await supabase.from('drivers').update({'is_available': value ? 'online' : 'offline'}).eq('id', driver!['id']);
-                setState(() => isAvailable = value);
-                if (value) _updateDriverLocation();
-              } catch (e) {
-                print('Error updating availability: $e');
-              } finally {
-                setState(() => isSwitchLoading = false);
-              }
+              await supabase.from('drivers').update({'is_available': v ? 'online' : 'offline'}).eq('id', driver!['id']);
+              setState(() {
+                isAvailable = v;
+                isSwitchLoading = false;
+              });
+              if (v) _updateDriverLocation();
             },
           ),
         ],
       ),
-    ];
+    );
+  }
+
+  Widget _buildOrdersList(bool isTablet, double padding) {
+    if (availableOrders.isEmpty) {
+      return const Center(child: Text('لا توجد طلبات حالياً', style: TextStyle(color: Colors.white54)));
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.symmetric(horizontal: padding),
+      itemCount: availableOrders.length,
+      itemBuilder: (context, index) {
+        final order = availableOrders[index];
+        final bool hasOffered = order['has_driver_offer'] == true;
+
+        return InkWell(
+          onTap: () => _openMapForOrder(order),
+          borderRadius: BorderRadius.circular(15),
+          child: Card(
+            color: Colors.white.withOpacity(0.1),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            margin: const EdgeInsets.only(bottom: 12),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${order['from_location']} ➔ ${order['to_location']}',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 17),
+                        ),
+                      ),
+                      if (order['display_dist'] != null)
+                        Text(
+                          order['display_dist'],
+                          style: const TextStyle(color: Colors.yellowAccent, fontSize: 13),
+                        ),
+                    ],
+                  ),
+                  const Divider(color: Colors.white12, height: 25),
+                  Text('نوع الشاحنة: ${order['truck_type']}', style: const TextStyle(color: Colors.white70)),
+                  Text('الحمولة: ${order['load_details'] ?? 'غير محدد'}', style: const TextStyle(color: Colors.white60, fontSize: 13)),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 55,
+                    child: ElevatedButton(
+                      onPressed: hasOffered ? null : () => _submitOffer(order),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: hasOffered ? Colors.white24 : const Color(0xFF2ECC71),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: Center(
+                        child: Text(
+                          hasOffered ? 'تم تقديم عرضك' : 'تقديم عرض سعر',
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, height: 1.0, fontSize: 16),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

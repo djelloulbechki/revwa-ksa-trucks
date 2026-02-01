@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-
 import 'driver_otp_page.dart';
 
 class DriverPhonePage extends StatefulWidget {
@@ -18,17 +17,10 @@ class _DriverPhonePageState extends State<DriverPhonePage> {
   String _message = '';
 
   final Map<String, String> countryCodes = {
-    '+966': 'السعودية',
-    '+213': 'الجزائر',
-    '+965': 'الكويت',
-    '+971': 'الإمارات',
-    '+974': 'قطر',
-    '+973': 'البحرين',
-    '+968': 'عمان',
-    '+20': 'مصر',
-    '+962': 'الأردن',
-    '+963': 'سوريا',
-    '+964': 'العراق',
+    '+966': 'السعودية', '+213': 'الجزائر', '+965': 'الكويت',
+    '+971': 'الإمارات', '+974': 'قطر', '+973': 'البحرين',
+    '+968': 'عمان', '+20': 'مصر', '+962': 'الأردن',
+    '+963': 'سوريا', '+964': 'العراق',
   };
 
   Future<void> _triggerWebhook() async {
@@ -83,122 +75,142 @@ class _DriverPhonePageState extends State<DriverPhonePage> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final bool isTablet = size.width > 600;
+
     return Scaffold(
+      // استخدام AppBar شفاف ليعطي مظهراً عصرياً مع التدرج اللوني
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text('أدخل رقم واتسابك'),
-        backgroundColor: const Color(0xFF1E4D2B),
-        foregroundColor: Colors.white,
+        title: const Text('تسجيل دخول السائق', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
         elevation: 0,
+        foregroundColor: Colors.white,
       ),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF1E4D2B),
-              Color(0xFF0D3B1E),
-            ],
+            colors: [Color(0xFF1E4D2B), Color(0xFF0D3B1E)],
           ),
         ),
         child: SafeArea(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              children: [
-                const SizedBox(height: 40),
-                const Text(
-                  'سنرسل كود التحقق على واتساب',
-                  style: TextStyle(fontSize: 20, color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 40),
-                DropdownButtonFormField<String>(
-                  value: _selectedCountryCode,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.2),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
-                    ),
-                    labelText: 'كود الدولة',
-                    labelStyle: const TextStyle(color: Colors.white),
+          child: Center(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.symmetric(horizontal: isTablet ? size.width * 0.2 : 24.0),
+              child: Column(
+                children: [
+                  const Icon(Icons.local_shipping, size: 80, color: Colors.white),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Rewwa Logistics',
+                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
-                  dropdownColor: const Color(0xFF1E4D2B),
-                  style: const TextStyle(color: Colors.white),
-                  items: countryCodes.entries.map((entry) {
-                    return DropdownMenuItem(
-                      value: entry.key,
-                      child: Text('${entry.key} ${entry.value}'),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedCountryCode = value!;
-                    });
-                  },
-                ),
-                const SizedBox(height: 20),
-                TextFormField(
-                  controller: _phoneController,
-                  keyboardType: TextInputType.phone,
-                  maxLength: 9,
-                  style: const TextStyle(color: Colors.white, fontSize: 24),
-                  textAlign: TextAlign.center,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.2),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
-                    ),
-                    hintText: '545375261',
-                    hintStyle: const TextStyle(color: Colors.white54, fontSize: 24),
-                    counterText: '',
-                    labelText: 'رقم الجوال (9 أرقام)',
-                    labelStyle: const TextStyle(color: Colors.white),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'سنرسل كود التحقق على واتساب',
+                    style: TextStyle(fontSize: 18, color: Colors.white70),
+                    textAlign: TextAlign.center,
                   ),
-                ),
-                const SizedBox(height: 20),
-                const Text(
-                  'مثال: 545375261 (بدون 0 في البداية)',
-                  style: TextStyle(color: Colors.white70),
-                ),
-                const SizedBox(height: 60),
-                SizedBox(
-                  width: double.infinity,
-                  height: 60,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _triggerWebhook,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2ECC71),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
+                  const SizedBox(height: 40),
+
+                  // كود الدولة
+                  DropdownButtonFormField<String>(
+                    value: _selectedCountryCode,
+                    decoration: _inputDecoration('كود الدولة'),
+                    dropdownColor: const Color(0xFF1E4D2B),
+                    style: const TextStyle(color: Colors.white, fontSize: 18),
+                    items: countryCodes.entries.map((e) => DropdownMenuItem(
+                      value: e.key, child: Text('${e.key} ${e.value}'),
+                    )).toList(),
+                    onChanged: (v) => setState(() => _selectedCountryCode = v!),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // رقم الجوال
+                  TextFormField(
+                    controller: _phoneController,
+                    keyboardType: TextInputType.phone,
+                    maxLength: 9,
+                    style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 2),
+                    textAlign: TextAlign.center,
+                    decoration: _inputDecoration('رقم الجوال (9 أرقام)').copyWith(
+                      hintText: '545375261',
+                      hintStyle: const TextStyle(color: Colors.white24),
+                      counterText: '',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'مثال: 545375261 (بدون 0 في البداية)',
+                    style: TextStyle(color: Colors.white54, fontSize: 14),
+                  ),
+                  const SizedBox(height: 50),
+
+                  // الزر (تم حل مشكلة النص الغارق هنا)
+                  SizedBox(
+                    width: double.infinity,
+                    height: 65, // زيادة الارتفاع قليلاً لراحة العين
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _triggerWebhook,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2ECC71),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                        elevation: 4,
+                        padding: EdgeInsets.zero, // لضمان توسط النص
+                      ),
+                      child: _isLoading
+                          ? const SizedBox(height: 28, width: 28, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
+                          : const Center(
+                        child: Text(
+                          'إرسال كود التحقق على واتساب',
+                          style: TextStyle(
+                            fontSize: 19,
+                            fontWeight: FontWeight.bold,
+                            height: 1.0, // حل مشكلة "غرق" النص العربي
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     ),
-                    child: _isLoading
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text(
-                      'إرسال كود التحقق على واتساب',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 25),
+
+                  if (_message.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        _message,
+                        style: TextStyle(color: _message.contains('تم') ? Colors.greenAccent : Colors.orangeAccent),
+                      ),
                     ),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  _message,
-                  style: TextStyle(
-                    color: _message.contains('تم') ? Colors.green : Colors.red,
-                    fontSize: 16,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  InputDecoration _inputDecoration(String label) {
+    return InputDecoration(
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.12),
+      labelText: label,
+      labelStyle: const TextStyle(color: Colors.white70),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: const BorderSide(color: Color(0xFF2ECC71), width: 1)),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
     );
   }
 }

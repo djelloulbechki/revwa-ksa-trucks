@@ -8,7 +8,9 @@
     <application
         android:label="ksa_trucks"
         android:name="${applicationName}"
-        android:icon="@mipmap/launcher_icon">
+        android:icon="@mipmap/launcher_icon"
+        android:enableOnBackInvokedCallback="true" android:usesCleartextTraffic="true">
+
 
         <meta-data
             android:name="com.google.android.geo.API_KEY"

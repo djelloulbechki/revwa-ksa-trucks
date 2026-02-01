@@ -1,13 +1,12 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
-
+import 'package:shared_preferences/shared_preferences.dart';
 import 'driver_info_page.dart';
-import 'driver_phone_page.dart';
+import 'home_dashboard.dart';
 
 class DriverOtpPage extends StatefulWidget {
   final String phone;
-
   const DriverOtpPage({super.key, required this.phone});
 
   @override
@@ -20,100 +19,73 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
   String _message = '';
 
   Future<void> _verifyOTP() async {
-    if (_otpController.text.length != 6) {
-      setState(() {
-        _message = 'الرجاء إدخال كود مكون من 6 أرقام';
-      });
+    final otp = _otpController.text.trim();
+    if (otp.length != 6) {
+      _showSnackBar('الرجاء إدخال كود مكون من 6 أرقام', Colors.red);
       return;
     }
 
-    setState(() {
-      _isLoading = true;
-      _message = '';
-    });
-
-    final verifyUrl = Uri.parse('https://revwa.cloud/webhook/driver-otp-verify');
+    setState(() => _isLoading = true);
 
     try {
       final response = await http.post(
-        verifyUrl,
+        Uri.parse('https://revwa.cloud/webhook/driver-otp-verify'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'phone': widget.phone,
-          'otp_code': _otpController.text.trim(),
-        }),
+        body: jsonEncode({'phone': widget.phone, 'otp_code': otp}),
       );
 
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['success'] == true) {
-        // التحقق ناجح – n8n هو اللي بيقرر الـ action
-        final String action = data['action'] ?? 'open_info_page';
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isLoggedIn', true);
+        await prefs.setString('userType', 'driver');
+        await prefs.setString('userPhone', widget.phone);
 
-        if (action == 'open_dashboard') {
-          // السائق موجود من قبل → داشبورد مباشرة
-          Navigator.of(context).pushReplacementNamed('/homeDashboard',arguments: widget.phone,);// نمرر الرقم);
+        if (data['action'] == 'open_dashboard') {
+          Navigator.pushReplacementNamed(context, '/homeDashboard', arguments: widget.phone);
         } else {
-          // سائق جديد → صفحة كمل البيانات
           Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (_) => DriverInfoPage(phone: widget.phone),
-            ),
+            MaterialPageRoute(builder: (_) => DriverInfoPage(phone: widget.phone)),
           );
         }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(data['message'] ?? 'تم التحقق بنجاح!'),
-            backgroundColor: Colors.green,
-          ),
-        );
       } else {
-        // الكود خطأ
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('الكود غير صحيح أو منتهي الصلاحية، جرب تاني برقم جديد'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 4),
-          ),
-        );
-
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => const DriverPhonePage(),
-          ),
-        );
+        setState(() {
+          _message = 'الكود غير صحيح أو منتهي الصلاحية، جرب ثاني';
+        });
+        _showSnackBar(_message, Colors.red);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('خطأ في الاتصال: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => const DriverPhonePage(),
-        ),
-      );
-    } finally {
       setState(() {
-        _isLoading = false;
+        _message = 'خطأ في الاتصال بالسيرفر';
       });
+      _showSnackBar(_message, Colors.red);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _showSnackBar(String m, Color c) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(m, textAlign: TextAlign.right),
+        backgroundColor: c,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final double h = size.height;
+    final double w = size.width;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('أدخل الكود'),
-        backgroundColor: const Color(0xFF1E4D2B),
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -121,63 +93,128 @@ class _DriverOtpPageState extends State<DriverOtpPage> {
             colors: [Color(0xFF1E4D2B), Color(0xFF0D3B1E)],
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              const SizedBox(height: 40),
-              Text(
-                'الكود المرسل إلى ${widget.phone}',
-                style: const TextStyle(fontSize: 20, color: Colors.white),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 40),
-              TextField(
-                controller: _otpController,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 32, color: Colors.white, letterSpacing: 16),
-                decoration: InputDecoration(
-                  filled: true,
-                  fillColor: Colors.white.withOpacity(0.2),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide.none,
+        child: SafeArea(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(),
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: w * 0.08),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(height: h * 0.10),
+
+                  // أيقونة كبيرة
+                  Icon(
+                    Icons.lock_outline_rounded,
+                    size: (w * 0.20).clamp(80, 120),
+                    color: const Color(0xFF2ECC71),
                   ),
-                  counterText: '',
-                  hintText: '------',
-                  hintStyle: const TextStyle(color: Colors.white38, fontSize: 32, letterSpacing: 16),
-                ),
-              ),
-              const SizedBox(height: 60),
-              SizedBox(
-                width: double.infinity,
-                height: 60,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _verifyOTP,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2ECC71),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+
+                  SizedBox(height: h * 0.04),
+
+                  // العنوان
+                  Text(
+                    'تأكيد رقم الهاتف',
+                    style: TextStyle(
+                      fontSize: (w * 0.08).clamp(28, 40),
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                    ),
                   ),
-                  child: _isLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text(
-                    'تحقق',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+
+                  SizedBox(height: h * 0.01),
+
+                  // وصف
+                  Text(
+                    'أدخل الكود المرسل إلى ${widget.phone}',
+                    style: TextStyle(
+                      fontSize: (w * 0.045).clamp(16, 20),
+                      color: Colors.white70,
+                    ),
+                    textAlign: TextAlign.center,
                   ),
-                ),
+
+                  SizedBox(height: h * 0.06),
+
+                  // حقل OTP أنيق
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white30, width: 1),
+                    ),
+                    child: TextField(
+                      controller: _otpController,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 12,
+                      ),
+                      maxLength: 6,
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        counterText: '',
+                        hintText: '------',
+                        hintStyle: TextStyle(color: Colors.white38, fontSize: 32),
+                      ),
+                    ),
+                  ),
+
+                  SizedBox(height: h * 0.05),
+
+                  // زر التحقق الكبير
+                  SizedBox(
+                    width: double.infinity,
+                    height: 60,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _verifyOTP,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2ECC71),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+                        elevation: 8,
+                      ),
+                      child: _isLoading
+                          ? const SizedBox(
+                        height: 24,
+                        width: 24,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 3,
+                        ),
+                      )
+                          : const Text(
+                        'تحقق من الكود',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // رسالة خطأ أو نجاح
+                  if (_message.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 20),
+                      child: Text(
+                        _message,
+                        style: TextStyle(
+                          color: _message.contains('نجاح') ? Colors.greenAccent : Colors.redAccent,
+                          fontSize: 16,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+
+                  SizedBox(height: h * 0.05),
+                ],
               ),
-              const SizedBox(height: 20),
-              Text(
-                _message,
-                style: TextStyle(
-                  color: _message.contains('نجاح') ? Colors.green : Colors.red,
-                  fontSize: 16,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
+            ),
           ),
         ),
       ),

@@ -1,13 +1,11 @@
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-
+import 'package:shared_preferences/shared_preferences.dart';
 import 'customer_dashboard.dart'; // تأكد من الاسم الصحيح
 
 class CustomerOtpPage extends StatefulWidget {
   final String phone;
-
   const CustomerOtpPage({super.key, required this.phone});
 
   @override
@@ -17,15 +15,12 @@ class CustomerOtpPage extends StatefulWidget {
 class _CustomerOtpPageState extends State<CustomerOtpPage> {
   final _otpController = TextEditingController();
   bool _isLoading = false;
+  String _message = '';
 
   Future<void> _verifyOtp() async {
-    if (_otpController.text.length != 6) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('الرجاء إدخال كود مكون من 6 أرقام'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    final otp = _otpController.text.trim();
+    if (otp.length != 6) {
+      _showSnackBar('الرجاء إدخال كود مكون من 6 أرقام', Colors.red);
       return;
     }
 
@@ -37,14 +32,20 @@ class _CustomerOtpPageState extends State<CustomerOtpPage> {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'phone': widget.phone,
-          'otp_code': _otpController.text.trim(),
+          'otp_code': otp,
         }),
       );
 
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['success'] == true) {
-        // التحقق ناجح → نفتح الداشبورد مباشرة
+        // حفظ الجلسة في SharedPreferences عشان يفضل مفتوح دائمًا
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setBool('isLoggedIn', true);
+        await prefs.setString('userType', 'customer');
+        await prefs.setString('userPhone', widget.phone);
+
+        // التنقل للداشبورد
         if (mounted) {
           Navigator.of(context).pushReplacement(
             MaterialPageRoute(
@@ -53,36 +54,51 @@ class _CustomerOtpPageState extends State<CustomerOtpPage> {
           );
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('الكود غير صحيح أو منتهي الصلاحية، جرب تاني'),
-            backgroundColor: Colors.red,
-            duration: Duration(seconds: 4),
-          ),
-        );
+        setState(() {
+          _message = 'الكود غير صحيح أو منتهي الصلاحية، جرب ثاني';
+        });
+        _showSnackBar(_message, Colors.red);
       }
     } catch (e) {
-      print('Error verifying OTP: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('خطأ في الاتصال: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      setState(() {
+        _message = 'خطأ في الاتصال بالسيرفر: $e';
+      });
+      _showSnackBar(_message, Colors.red);
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _showSnackBar(String m, Color c) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(m, textAlign: TextAlign.right),
+        backgroundColor: c,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final bool isTablet = size.width > 600;
+    final double horizontalPadding = isTablet ? size.width * 0.25 : 24.0;
+
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        foregroundColor: Colors.white,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
+        ),
       ),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -91,59 +107,128 @@ class _CustomerOtpPageState extends State<CustomerOtpPage> {
           ),
         ),
         child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Text(
-                  'أدخل الكود المرسل',
-                  style: TextStyle(fontSize: 28, color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'الكود المرسل إلى ${widget.phone}',
-                  style: const TextStyle(fontSize: 18, color: Colors.white70),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 60),
-                TextField(
-                  controller: _otpController,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 32, color: Colors.white, letterSpacing: 16),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.2),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      borderSide: BorderSide.none,
-                    ),
-                    counterText: '',
-                    hintText: '------',
-                    hintStyle: const TextStyle(color: Colors.white38, fontSize: 32, letterSpacing: 16),
+          child: Center(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.lock_outline,
+                    size: 80,
+                    color: Colors.white24,
                   ),
-                ),
-                const SizedBox(height: 60),
-                SizedBox(
-                  width: double.infinity,
-                  height: 60,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _verifyOtp,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2ECC71),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  const SizedBox(height: 30),
+                  const Text(
+                    'تأكيد الهوية',
+                    style: TextStyle(
+                      fontSize: 32,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
                     ),
-                    child: _isLoading
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text(
-                      'تحقق',
-                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 15),
+                  Text(
+                    'أدخل كود التحقق المرسل إلى\n${widget.phone}',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      color: Colors.white70,
+                      height: 1.5,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 50),
+
+                  // حقل إدخال الكود المحسن
+                  TextField(
+                    controller: _otpController,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: isTablet ? 36 : 30,
+                      color: Colors.white,
+                      letterSpacing: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: '000000',
+                      hintStyle: TextStyle(
+                        color: Colors.white.withOpacity(0.1),
+                        letterSpacing: 15,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.1),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide(color: Colors.white.withOpacity(0.05)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: const BorderSide(color: Color(0xFF2ECC71), width: 2),
+                      ),
+                      counterText: '',
                     ),
                   ),
-                ),
-              ],
+
+                  const SizedBox(height: 40),
+
+                  // زر التحقق الكبير
+                  SizedBox(
+                    width: double.infinity,
+                    height: 65,
+                    child: ElevatedButton(
+                      onPressed: _isLoading ? null : _verifyOtp,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2ECC71),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        elevation: 4,
+                      ),
+                      child: Center(
+                        child: _isLoading
+                            ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 3,
+                          ),
+                        )
+                            : const Text(
+                          'تأكيد الرمز',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            height: 1.0,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 30),
+
+                  // خيار إعادة الإرسال
+                  TextButton(
+                    onPressed: _isLoading
+                        ? null
+                        : () {
+                      // هنا يمكنك استدعاء نفس الـ Webhook الخاص بإرسال الـ OTP
+                      _showSnackBar('جاري إعادة إرسال الكود...', Colors.blueGrey);
+                    },
+                    child: const Text(
+                      'لم يصلك الكود؟ إعادة إرسال',
+                      style: TextStyle(color: Colors.white60, fontSize: 14),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ),

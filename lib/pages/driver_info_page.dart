@@ -4,7 +4,6 @@ import 'dart:convert';
 
 import '../constants/truck_types.dart';
 import '../constants/regions.dart';
-import '../main.dart';
 import 'home_dashboard.dart';
 
 class DriverInfoPage extends StatefulWidget {
@@ -45,11 +44,9 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
       _message = '';
     });
 
-    final completeUrl = Uri.parse('https://revwa.cloud/webhook/driver-registration');
-
     try {
       final response = await http.post(
-        completeUrl,
+        Uri.parse('https://revwa.cloud/webhook/driver-registration'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'phone': widget.phone,
@@ -59,47 +56,50 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
           'truck_type': _truckType,
           'manufacturing_year': _manufacturingYear,
         }),
-      );
+      ).timeout(const Duration(seconds: 15));
 
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['success'] == true) {
-        _message = data['message'] ?? 'تم التسجيل بنجاح!';
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('تم التسجيل بنجاح! تحقق من رصيدك 100 ريال مجاني 🎁'),
-            backgroundColor: Colors.green,
-          ),
-        );
+        if (!mounted) return;
+        _showSnackBar('تم التسجيل بنجاح! تحقق من رصيدك 100 ريال مجاني 🎁', Colors.green);
 
-        //Navigator.of(context).pushReplacementNamed('/homeDashboard');
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => HomeDashboard(driverPhone: widget.phone),
-          ),
+          MaterialPageRoute(builder: (_) => HomeDashboard(driverPhone: widget.phone)),
         );
       } else {
-        _message = data['message'] ?? 'خطأ في التسجيل';
+        setState(() => _message = data['message'] ?? 'خطأ في التسجيل');
       }
     } catch (e) {
-      _message = 'خطأ في الاتصال: $e';
+      setState(() => _message = 'خطأ في الاتصال بالشبكة');
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  void _showSnackBar(String msg, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg, textAlign: TextAlign.right), backgroundColor: color),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
+    final bool isTablet = size.width > 600;
+
     return Scaffold(
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text('كمل بياناتك'),
-        backgroundColor: const Color(0xFF1E4D2B),
-        foregroundColor: Colors.white,
+        title: const Text('إكمال البيانات', style: TextStyle(fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        backgroundColor: Colors.transparent,
         elevation: 0,
+        foregroundColor: Colors.white,
       ),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
@@ -107,180 +107,133 @@ class _DriverInfoPageState extends State<DriverInfoPage> {
             colors: [Color(0xFF1E4D2B), Color(0xFF0D3B1E)],
           ),
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Form(
-            key: _formKey,
-            child: ListView(
-              children: [
-                const Text(
-                  'كمل بياناتك عشان تبدأ تستقبل طلبات!',
-                  style: TextStyle(fontSize: 22, color: Colors.white, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 40),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.symmetric(horizontal: isTablet ? size.width * 0.2 : 24.0, vertical: 20),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  children: [
+                    const Icon(Icons.person_add_alt_1, size: 70, color: Colors.white),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'كمل بياناتك وابدأ العمل فوراً',
+                      style: TextStyle(fontSize: 22, color: Colors.white, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 30),
 
-                TextFormField(
-                  controller: _nameController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    labelText: 'الاسم الكامل *',
-                    labelStyle: const TextStyle(color: Colors.white),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.2),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
+                    // الاسم الكامل
+                    TextFormField(
+                      controller: _nameController,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputDecoration('الاسم الكامل *', Icons.person),
+                      validator: (value) => value?.trim().isEmpty ?? true ? 'الرجاء إدخال الاسم' : null,
                     ),
-                  ),
-                  validator: (value) => value?.trim().isEmpty ?? true ? 'الرجاء إدخال الاسم' : null,
-                ),
-                const SizedBox(height: 20),
+                    const SizedBox(height: 15),
 
-                // المنطقة
-                DropdownButtonFormField<String>(
-                  value: _selectedRegion,
-                  hint: const Text('اختر المنطقة *', style: TextStyle(color: Colors.white)),
-                  decoration: InputDecoration(
-                    labelText: 'المنطقة *',
-                    labelStyle: const TextStyle(color: Colors.white),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.2),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
+                    // المنطقة
+                    DropdownButtonFormField<String>(
+                      value: _selectedRegion,
+                      dropdownColor: const Color(0xFF1E4D2B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputDecoration('المنطقة *', Icons.map),
+                      items: saudiRegions.keys.map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
+                      onChanged: (v) {
+                        setState(() {
+                          _selectedRegion = v;
+                          _updateGovernorates(v);
+                        });
+                      },
+                      validator: (value) => value == null ? 'الرجاء اختيار المنطقة' : null,
                     ),
-                  ),
-                  dropdownColor: const Color(0xFF1E4D2B),
-                  style: const TextStyle(color: Colors.white),
-                  items: saudiRegions.keys.map((region) {
-                    return DropdownMenuItem(value: region, child: Text(region));
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _selectedRegion = value;
-                      _updateGovernorates(value);
-                    });
-                  },
-                  validator: (value) => value == null ? 'الرجاء اختيار المنطقة' : null,
-                ),
-                const SizedBox(height: 20),
+                    const SizedBox(height: 15),
 
-                // المحافظة (تظهر فقط بعد اختيار المنطقة)
-                DropdownButtonFormField<String>(
-                  value: _selectedGovernorate,
-                  hint: const Text('اختر المحافظة *', style: TextStyle(color: Colors.white)),
-                  decoration: InputDecoration(
-                    labelText: 'المحافظة *',
-                    labelStyle: const TextStyle(color: Colors.white),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.2),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
+                    // المحافظة
+                    DropdownButtonFormField<String>(
+                      value: _selectedGovernorate,
+                      dropdownColor: const Color(0xFF1E4D2B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputDecoration('المحافظة *', Icons.location_city),
+                      items: _currentGovernorates.map((g) => DropdownMenuItem(value: g, child: Text(g))).toList(),
+                      onChanged: _currentGovernorates.isEmpty ? null : (v) => setState(() => _selectedGovernorate = v),
+                      validator: (value) => _currentGovernorates.isNotEmpty && value == null ? 'الرجاء اختيار المحافظة' : null,
                     ),
-                  ),
-                  dropdownColor: const Color(0xFF1E4D2B),
-                  style: const TextStyle(color: Colors.white),
-                  items: _currentGovernorates.map((gov) {
-                    return DropdownMenuItem(value: gov, child: Text(gov));
-                  }).toList(),
-                  onChanged: _currentGovernorates.isEmpty ? null : (value) {
-                    setState(() {
-                      _selectedGovernorate = value;
-                    });
-                  },
-                  validator: _currentGovernorates.isEmpty
-                      ? null
-                      : (value) => value == null ? 'الرجاء اختيار المحافظة' : null,
-                ),
-                const SizedBox(height: 20),
+                    const SizedBox(height: 15),
 
-                // نوع الشاحنة
-                DropdownButtonFormField<String>(
-                  value: _truckType,
-                  decoration: InputDecoration(
-                    labelText: 'نوع الشاحنة أو المعدة *',
-                    labelStyle: const TextStyle(color: Colors.white),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.2),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
+                    // نوع الشاحنة
+                    DropdownButtonFormField<String>(
+                      value: _truckType,
+                      dropdownColor: const Color(0xFF1E4D2B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputDecoration('نوع الشاحنة *', Icons.local_shipping),
+                      items: truckTypes.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
+                      onChanged: (v) => setState(() => _truckType = v!),
                     ),
-                  ),
-                  dropdownColor: const Color(0xFF1E4D2B),
-                  style: const TextStyle(color: Colors.white),
-                  items: truckTypes.map((type) {
-                    return DropdownMenuItem(value: type, child: Text(type));
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _truckType = value!;
-                    });
-                  },
-                  validator: (value) => value == null ? 'الرجاء اختيار نوع الشاحنة' : null,
-                ),
-                const SizedBox(height: 20),
+                    const SizedBox(height: 15),
 
-                // سنة التصنيع
-                DropdownButtonFormField<int>(
-                  value: _manufacturingYear,
-                  decoration: InputDecoration(
-                    labelText: 'سنة التصنيع *',
-                    labelStyle: const TextStyle(color: Colors.white),
-                    filled: true,
-                    fillColor: Colors.white.withOpacity(0.2),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(16),
-                      borderSide: BorderSide.none,
+                    // سنة التصنيع
+                    DropdownButtonFormField<int>(
+                      value: _manufacturingYear,
+                      dropdownColor: const Color(0xFF1E4D2B),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: _inputDecoration('سنة التصنيع *', Icons.calendar_today),
+                      items: List.generate(41, (i) => DateTime.now().year - i)
+                          .map((y) => DropdownMenuItem(value: y, child: Text(y.toString()))).toList(),
+                      onChanged: (v) => setState(() => _manufacturingYear = v!),
                     ),
-                  ),
-                  dropdownColor: const Color(0xFF1E4D2B),
-                  style: const TextStyle(color: Colors.white),
-                  items: List.generate(41, (index) => DateTime.now().year - index)
-                      .map((year) => DropdownMenuItem(value: year, child: Text(year.toString())))
-                      .toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      _manufacturingYear = value!;
-                    });
-                  },
-                  validator: (value) => value == null ? 'الرجاء اختيار سنة التصنيع' : null,
-                ),
-                const SizedBox(height: 40),
 
-                SizedBox(
-                  width: double.infinity,
-                  height: 60,
-                  child: ElevatedButton(
-                    onPressed: _isLoading ? null : _completeRegistration,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF2ECC71),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    const SizedBox(height: 40),
+
+                    // الزر مع حل مشكلة النص الغارق
+                    SizedBox(
+                      width: double.infinity,
+                      height: 65,
+                      child: ElevatedButton(
+                        onPressed: _isLoading ? null : _completeRegistration,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2ECC71),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                          elevation: 4,
+                          padding: EdgeInsets.zero,
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(height: 28, width: 28, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
+                            : const Center(
+                          child: Text(
+                            'تسجيل الآن',
+                            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, height: 1.0),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
                     ),
-                    child: _isLoading
-                        ? const CircularProgressIndicator(color: Colors.white)
-                        : const Text(
-                      'تسجيل الآن',
-                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                    ),
-                  ),
+
+                    if (_message.isNotEmpty) ...[
+                      const SizedBox(height: 20),
+                      Text(_message, style: const TextStyle(color: Colors.orangeAccent)),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 20),
-                Text(
-                  _message,
-                  style: TextStyle(
-                    color: _message.contains('نجاح') ? Colors.green : Colors.red,
-                    fontSize: 16,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ],
+              ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  InputDecoration _inputDecoration(String label, IconData icon) {
+    return InputDecoration(
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.12),
+      labelText: label,
+      labelStyle: const TextStyle(color: Colors.white70, fontSize: 14),
+      prefixIcon: Icon(icon, color: Colors.white54, size: 20),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(16), borderSide: BorderSide.none),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
     );
   }
 }

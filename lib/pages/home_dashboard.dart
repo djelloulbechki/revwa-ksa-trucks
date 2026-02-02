@@ -18,6 +18,7 @@ class HomeDashboard extends StatefulWidget {
 class _HomeDashboardState extends State<HomeDashboard> {
   final supabase = Supabase.instance.client;
   Map<String, dynamic>? driver;
+  double balance = 0.0; // ← الرصيد الحالي (مجموع amount)
   String currentCity = 'جاري التحديد...';
   String truckType = 'غير محدد';
   List<Map<String, dynamic>> availableOrders = [];
@@ -43,15 +44,29 @@ class _HomeDashboardState extends State<HomeDashboard> {
   Future<void> _loadDriverData() async {
     setState(() => isLoading = true);
     try {
+      // جلب بيانات السائق
       driver = await supabase
           .from('drivers')
-          .select()
+          .select('id, name, is_available, current_city, latitude, longitude')
           .eq('phone', widget.driverPhone)
           .single();
 
       isAvailable = driver!['is_available'] == 'online';
       currentCity = driver!['current_city'] ?? 'غير محدد';
 
+      // ← الجزء الجديد: حساب الرصيد من جدول wallet_transactions
+      final walletRes = await supabase
+          .from('wallet_transactions')
+          .select('amount')
+          .eq('driver_id', driver!['id']);
+
+      double calculatedBalance = 0.0;
+      for (var tx in walletRes) {
+        calculatedBalance += (tx['amount'] as num).toDouble();
+      }
+      balance = calculatedBalance;
+
+      // جلب نوع الشاحنة
       final assignment = await supabase
           .from('driver_truck_assignments')
           .select('trucks(truck_type)')
@@ -75,7 +90,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
       _startLocationUpdates();
     } catch (e) {
-      _showSnackBar('خطأ في جلب البيانات', Colors.red);
+      _showSnackBar('خطأ في جلب البيانات: $e', Colors.red);
+      debugPrint('Error in _loadDriverData: $e');
     } finally {
       if (mounted) setState(() => isLoading = false);
     }
@@ -99,13 +115,11 @@ class _HomeDashboardState extends State<HomeDashboard> {
         Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.low);
         List<Placemark> placemarks = await placemarkFromCoordinates(position.latitude, position.longitude);
         String? city = placemarks.isNotEmpty ? placemarks[0].locality : null;
-
         await supabase.from('drivers').update({
           'latitude': position.latitude,
           'longitude': position.longitude,
           if (city != null) 'current_city': city,
         }).eq('id', driver!['id']);
-
         if (mounted && city != null) setState(() => currentCity = city);
       }
     } catch (e) {
@@ -116,14 +130,12 @@ class _HomeDashboardState extends State<HomeDashboard> {
   Future<void> _loadAvailableOrders({bool refreshOnly = false}) async {
     if (driver == null) return;
     if (!refreshOnly) setState(() => isLoading = true);
-
     try {
       final response = await supabase.rpc('get_driver_orders', params: {
         'p_driver_id': driver!['id'],
         'p_driver_lat': driver!['latitude'] ?? 0.0,
         'p_driver_lng': driver!['longitude'] ?? 0.0,
       });
-
       if (mounted) {
         setState(() {
           availableOrders = List<Map<String, dynamic>>.from(response).map((o) {
@@ -215,7 +227,6 @@ class _HomeDashboardState extends State<HomeDashboard> {
   Future<void> _openMapForOrder(Map<String, dynamic> order) async {
     final String fromLocation = order['from_location'] ?? 'مكة';
     final Uri googleMapsUrl;
-
     if (order['from_lat'] != null && order['from_lng'] != null) {
       final double lat = (order['from_lat'] as num).toDouble();
       final double lng = (order['from_lng'] as num).toDouble();
@@ -223,7 +234,6 @@ class _HomeDashboardState extends State<HomeDashboard> {
     } else {
       googleMapsUrl = Uri.parse('https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(fromLocation)}');
     }
-
     if (await canLaunchUrl(googleMapsUrl)) {
       await launchUrl(googleMapsUrl, mode: LaunchMode.externalApplication);
     } else {
@@ -231,11 +241,9 @@ class _HomeDashboardState extends State<HomeDashboard> {
     }
   }
 
-  /// دالة تسجيل الخروج
   Future<void> _signOut() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear(); // أو prefs.remove('isLoggedIn'); prefs.remove('userType'); prefs.remove('userPhone');
-
+    await prefs.clear();
     if (mounted) {
       Navigator.pushReplacementNamed(context, '/userType');
       _showSnackBar('تم تسجيل الخروج بنجاح', Colors.orange);
@@ -299,36 +307,95 @@ class _HomeDashboardState extends State<HomeDashboard> {
   Widget _buildHeader(bool isTablet, double padding) {
     return Padding(
       padding: EdgeInsets.all(padding),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'مرحباً، ${driver?['name'] ?? 'سائقنا'}',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: isTablet ? 26 : 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 5),
-                Row(
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.location_on, color: Colors.greenAccent, size: 16),
-                    const SizedBox(width: 4),
                     Text(
-                      currentCity,
-                      style: TextStyle(color: Colors.white70, fontSize: isTablet ? 16 : 14),
+                      'مرحباً، ${driver?['name'] ?? 'سائقنا'}',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: isTablet ? 26 : 20,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Row(
+                      children: [
+                        const Icon(Icons.location_on, color: Colors.greenAccent, size: 16),
+                        const SizedBox(width: 4),
+                        Text(
+                          currentCity,
+                          style: TextStyle(color: Colors.white70, fontSize: isTablet ? 16 : 14),
+                        ),
+                      ],
                     ),
                   ],
+                ),
+              ),
+              _buildStatusSwitch(),
+            ],
+          ),
+
+          // كارت الرصيد البارز والجديد
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Colors.greenAccent, Colors.teal],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.teal.withOpacity(0.5),
+                  blurRadius: 12,
+                  spreadRadius: 2,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'رصيد محفظتك',
+                      style: TextStyle(
+                        color: Colors.purpleAccent,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '${balance.toStringAsFixed(2)} ريال',
+                      style: const TextStyle(
+                        color: Colors.purpleAccent,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+                const Icon(
+                  Icons.account_balance_wallet_rounded,
+                  color: Colors.white,
+                  size: 40,
                 ),
               ],
             ),
           ),
-          _buildStatusSwitch(),
         ],
       ),
     );
@@ -368,14 +435,12 @@ class _HomeDashboardState extends State<HomeDashboard> {
     if (availableOrders.isEmpty) {
       return const Center(child: Text('لا توجد طلبات حالياً', style: TextStyle(color: Colors.white54)));
     }
-
     return ListView.builder(
       padding: EdgeInsets.symmetric(horizontal: padding),
       itemCount: availableOrders.length,
       itemBuilder: (context, index) {
         final order = availableOrders[index];
         final bool hasOffered = order['has_driver_offer'] == true;
-
         return InkWell(
           onTap: () => _openMapForOrder(order),
           borderRadius: BorderRadius.circular(15),
